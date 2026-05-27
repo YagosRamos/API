@@ -3,6 +3,7 @@ const app = express();
 const PORTA = 3000;
 
 let BancoPedidos = [];
+let proximoCodigo = 1; // Variável para gerar números inteiros sequenciais
 
 app.use(express.json());
 
@@ -10,98 +11,126 @@ app.listen(PORTA, () => {
     console.log(`Servidor rodando em http://localhost:${PORTA}`);
 });
 
-// Criar Pedido
+// US01 - Inclusão de um novo pedido
 app.post('/pedidos', (req, res) => {
-    const { clientecpf, clientenome, produtonome, produtopreco } = req.body;
+    const { clienteCpf, clienteNome, produtoNome, produtoPreco } = req.body;
 
-    if (!clientecpf) return res.status(400).send("CPF é obrigatório");
-    if (clientecpf.length < 9) return res.status(400).send("CPF inválido. CPF deve ter no mínimo 9 dígitos");
-    if (isNaN(clientecpf)) return res.status(400).send("CPF deve ser numérico");
+    // [R01, R02] Validando CPF
+    if (!clienteCpf) return res.status(400).send("CPF do cliente é obrigatório");
+    if (isNaN(clienteCpf) || String(clienteCpf).length !== 9) {
+        return res.status(400).send("CPF deve ser numérico e possuir exatamente 9 algarismos");
+    }
     
-    if (!clientenome) return res.status(400).send("Nome é obrigatório");
-    if (clientenome.length < 5) return res.status(400).send("Nome deve possuir no mínimo 5 caracteres");
+    // [R03, R04] Validando Nome do Cliente
+    if (!clienteNome) return res.status(400).send("Nome do cliente é obrigatório");
+    if (clienteNome.length < 5) return res.status(400).send("Nome do cliente deve ter pelo menos 5 caracteres");
 
-    if (!produtonome) return res.status(400).send("Nome do produto é obrigatório");
-    if (produtonome.length < 5) return res.status(400).send("Nome do produto deve possuir no mínimo 5 caracteres");
+    // [R05, R06] Validando Nome do Produto
+    if (!produtoNome) return res.status(400).send("Nome do produto é obrigatório");
+    if (produtoNome.length < 5) return res.status(400).send("Nome do produto deve ter pelo menos 5 caracteres");
 
-    if (!produtopreco) return res.status(400).send("Preço do produto é obrigatório");
-    if (produtopreco < 0) return res.status(400).send("Preço do produto não pode ser negativo");
+    // [R07, R08] Validando Preço
+    if (produtoPreco === undefined || produtoPreco === null) return res.status(400).send("Preço do produto é obrigatório");
+    if (typeof produtoPreco !== 'number' || produtoPreco < 0) return res.status(400).send("Preço do produto deve ser um número positivo");
 
-    
+    // [R09] Geração automática
     const novoPedido = {
-        codigo: Date.now().toString(),
+        codigo: proximoCodigo++, // Adiciona o número inteiro atual e depois soma 1 para o próximo
         dataHora: new Date(),
-        status: "aberto",
-        clientecpf,
-        clientenome,
-        produtonome,
-        produtopreco
+        clienteCpf: String(clienteCpf),
+        clienteNome,
+        produtoNome,
+        produtoPreco,
+        situacao: "aberto"
     };
     
     BancoPedidos.push(novoPedido);
 
-    return res.status(201).json({
-        mensagem: "Pedido cadastrado com sucesso",
-        pedido: novoPedido
-    });    
+    return res.status(201).json(novoPedido);    
 });
 
-// Listagem de Pedidos
+// US02 - Listagem de pedidos
 app.get("/pedidos", (req, res) => {
-    const { status } = req.query;
-    
+    const { situacao } = req.query;
     let pedidosFiltrados = BancoPedidos;
 
-    // Se um status for passado na URL (ex: ?status=pago), ele filtra
-    if (status) {
-        pedidosFiltrados = BancoPedidos.filter(p => p.status === status);
+    // [R01, R02] Filtragem opcional e validação de valores
+    if (situacao) {
+        if (!["aberto", "pago", "finalizado"].includes(situacao)) {
+            return res.status(400).send("A situação para filtro deve ser 'aberto', 'pago' ou 'finalizado'");
+        }
+        pedidosFiltrados = BancoPedidos.filter(p => p.situacao === situacao);
     }
 
-    return res.status(200).json(pedidosFiltrados);
+    // [R03] Retornar apenas os dados específicos (ocultando o CPF)
+    const resposta = pedidosFiltrados.map(pedido => ({
+        codigo: pedido.codigo,
+        dataHora: pedido.dataHora,
+        clienteNome: pedido.clienteNome,
+        produtoNome: pedido.produtoNome,
+        situacao: pedido.situacao,
+        valorTotal: pedido.produtoPreco
+    }));
+
+    return res.status(200).json(resposta);
 });
 
-// Consulta de um pedido específico
+// US03 - Consulta de um pedido
 app.get("/pedidos/:codigo", (req, res) => {
-    const { codigo } = req.params; 
+    // [R01] Código obrigatório (já garantido pela rota)
+    const codigoParam = req.params.codigo; 
 
-    if (!codigo) {
-        return res.status(400).send("Código do produto é obrigatório");
-    }
+    // [R02] Valida se é número
+    if (isNaN(codigoParam)) return res.status(400).send("O código do pedido deve ser um número");
+    
+    const codigoConvertido = Number(codigoParam);
+    const pedido = BancoPedidos.find(p => p.codigo === codigoConvertido);
 
-    const pedidoEncontrado = BancoPedidos.find(c => c.codigo === codigo);
-
-    if (!pedidoEncontrado) {
-        return res.status(404).send("Pedido não encontrado");
-    }
-
-    return res.status(200).json(pedidoEncontrado);
-});
-
-// Atualizar a situação de um pedido
-app.put("/pedidos/:codigo", (req, res) => {
-    const { codigo } = req.params;
-    const { status } = req.body;
-
-    if (!status || !["aberto", "pago", "finalizado"].includes(status)) {
-        return res.status(400).send("Status obrigatório e válido (aberto, pago, finalizado)");
-    }
-
-    const pedido = BancoPedidos.find(p => p.codigo === codigo);
     if (!pedido) return res.status(404).send("Pedido não encontrado");
 
-    pedido.status = status;
+    // [R03] Retorno específico
+    return res.status(200).json({
+        codigo: pedido.codigo,
+        dataHora: pedido.dataHora,
+        clienteCpf: pedido.clienteCpf,
+        clienteNome: pedido.clienteNome,
+        produtoNome: pedido.produtoNome,
+        situacao: pedido.situacao,
+        valorTotal: pedido.produtoPreco
+    });
+});
+
+// US04 - Atualizar a situação de um pedido
+app.put("/pedidos/:codigo", (req, res) => {
+    const codigoParam = req.params.codigo;
+    const { situacao } = req.body;
+
+    // [R02] Valida se é número
+    if (isNaN(codigoParam)) return res.status(400).send("O código do pedido deve ser um número");
+    
+    // [R03, R04] Valida a situação enviada
+    if (!situacao || !["aberto", "pago", "finalizado"].includes(situacao)) {
+        return res.status(400).send("A situação do pedido é obrigatória e deve ser 'aberto', 'pago' ou 'finalizado'");
+    }
+
+    const codigoConvertido = Number(codigoParam);
+    const pedido = BancoPedidos.find(p => p.codigo === codigoConvertido);
+    
+    if (!pedido) return res.status(404).send("Pedido não encontrado");
+
+    pedido.situacao = situacao;
     return res.status(200).json(pedido);
 });
 
-// Deletar um pedido
+// US05 - Deletar um pedido
 app.delete("/pedidos/:codigo", (req, res) => {
-    const { codigo } = req.params;
+    const codigoParam = req.params.codigo;
 
-    if (!codigo) {
-        return res.status(400).send("Código é obrigatório");
-    }
+    // [R02] Valida se é número
+    if (isNaN(codigoParam)) return res.status(400).send("O código do pedido deve ser um número");
 
-    const indice = BancoPedidos.findIndex(c => c.codigo === codigo);
+    const codigoConvertido = Number(codigoParam);
+    const indice = BancoPedidos.findIndex(p => p.codigo === codigoConvertido);
 
     if (indice === -1) {
         return res.status(404).send("Pedido não encontrado para remoção");
